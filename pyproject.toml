@@ -1,0 +1,54 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vimeo-backup-tool"
+version = "0.1.0"
+description = "A CLI tool to download and back up your Vimeo video library."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [
+    { name = "Your Name", email = "you@example.com" },
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "Topic :: Multimedia :: Video",
+    "Topic :: System :: Archiving :: Backup",
+]
+dependencies = [
+    "click",
+    "keyring",
+    "pyvimeo",
+    "requests",
+    "rich",
+    "tqdm",
+]
+
+[project.scripts]
+vmb = "vmb.cli:main"
+
+[project.urls]
+"Homepage" = "https://github.com/yourorg/vimeo-backup"  # Replace with actual URL
+"Bug Tracker" = "https://github.com/yourorg/vimeo-backup/issues" # Replace with actual URL
+
+[tool.setuptools]
+packages = ["vmb"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+select = ["E", "F", "W", "I"] # Enable basic flake8, pyflakes, pycodestyle, isort
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true # Initially true, tighten later
+disallow_untyped_defs = true 

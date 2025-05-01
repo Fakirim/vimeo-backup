@@ -1,0 +1,13 @@
+# Core Dependencies
+click
+keyring
+pyvimeo
+requests
+rich
+tqdm
+
+# Development & Testing Dependencies
+mypy
+pytest
+pytest-httpx
+ruff 
