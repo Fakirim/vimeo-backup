@@ -1,94 +1,157 @@
-# Vimeo Library Backup Tool
+# Vimeo Library Backup Tool (`vmb`)
 
-A Python CLI tool to download and back up your Vimeo video library.
+<!-- Badges (update URLs when available) -->
+[![Build Status](https://img.shields.io/github/actions/workflow/status/Fakirim/vimeo-backup/ci.yml?branch=main)](https://github.com/Fakirim/vimeo-backup/actions)
+[![PyPI version](https://img.shields.io/pypi/v/vimeo-backup-tool.svg)](https://pypi.org/project/vimeo-backup-tool/)
+[![Python Version](https://img.shields.io/pypi/pyversions/vimeo-backup-tool.svg)](https://pypi.org/project/vimeo-backup-tool/)
+[![License](https://img.shields.io/github/license/Fakirim/vimeo-backup.svg)](https://github.com/Fakirim/vimeo-backup/blob/main/LICENSE)
+[![Code style: ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
 
-See `docs/PRD.md` for detailed requirements.
+A robust, cross-platform Python CLI tool designed for Vimeo Pro (and above) users to download and incrementally back up their **entire video library** to local storage. Built using the official Vimeo API to ensure compliance.
+
+See `docs/PRD.md` (private) for detailed original requirements.
+
+## Key Features
+
+*   **Full Library Backup:** Downloads all videos accessible via your Vimeo API token.
+*   **Incremental Sync:** Uses a local manifest (`vmb_manifest.json`) to track downloaded files and only downloads new or updated videos on subsequent runs.
+*   **Quality Selection:** Choose your preferred video quality (`best`, `original`, `1080p`, `720p`, etc.).
+*   **Resumable Downloads:** Automatically resumes interrupted downloads.
+*   **Integrity Verification:** Calculates SHA-256 checksums after download and provides a `verify` command to check local files against the manifest.
+*   **Concurrent Downloads:** Utilizes multiple threads (`--threads`) for faster downloading.
+*   **Secure Token Storage:** Stores your Vimeo Personal Access Token (PAT) securely in the OS keyring.
+*   **Cross-Platform:** Designed to work on macOS, Linux, and Windows.
 
 ## Installation
 
+Requires **Python >= 3.11**.
+
 ```bash
-# Clone repository
-git clone https://github.com/Fakirim/vimeo-backup.git # Updated URL
+# 1. Clone the repository
+git clone https://github.com/Fakirim/vimeo-backup.git
 cd vimeo-backup
 
-# Set up virtual environment (Requires Python >= 3.11)
-# Use the correct python command for your Python 3.11+ installation
-python3.11 -m venv .venv # Or python3.12, python3, /path/to/python, etc.
-source .venv/bin/activate  # On Windows use `.venv\Scripts\activate`
+# 2. Create and activate a virtual environment
+#    (Use the command for your Python 3.11+ interpreter)
+python3.11 -m venv .venv 
+source .venv/bin/activate  # On Windows use: .venv\Scripts\activate
 
-# Install dependencies
+# 3. Install dependencies
 pip install -U pip
 pip install -r requirements.txt
 
-# Install the tool itself in editable mode
+# 4. Install the tool in editable mode (recommended for development)
+#    This makes the `vmb` command available in your activated environment.
 pip install -e .
+
+# OR: Install for general use (if published to PyPI later)
+# pip install vimeo-backup-tool
 ```
 
 ## Usage
 
 First, ensure your virtual environment is activated (`source .venv/bin/activate`).
 
+**1. Authentication (Run Once)**
+
 ```bash
-# 1. Authenticate (Run once)
-# Prompts for your Vimeo Personal Access Token (PAT)
-# Requires 'public', 'private', 'video_files' scopes.
-# Token is stored securely in your OS keyring.
+# Prompts for your Vimeo Personal Access Token (PAT).
+# Requires 'public', 'private', and 'video_files' scopes.
+# Get a token: https://developer.vimeo.com/apps
 vmb auth
+```
+The token is stored securely in your OS keyring.
 
-# 2. Sync Videos
-# Downloads new/updated videos to the destination directory.
-# Creates/updates a 'vmb_manifest.json' file in the destination.
-vmb sync --dest /path/to/your/backup --threads 4 --quality best
+**2. Syncing Videos**
 
-# Key sync options:
-#   --dest DIR      [Required] Destination directory for backups.
-#   --threads INT   Number of parallel downloads (default: 4).
-#   --quality QUAL  Preferred quality: best, original, 1080p, 720p, etc. (default: best).
-#   --since DATE    (TODO) Only download videos newer than this date/time.
-#   --dry-run       Show what would be downloaded without downloading.
+```bash
+# Basic sync: Downloads new/updated videos to the specified directory
+vmb sync --dest /path/to/your/backup
 
-# 3. Verify Backup Integrity
-# Checks downloaded files against the checksums in 'vmb_manifest.json'.
+# Sync with options:
+vmb sync --dest ~/Videos/VimeoBackup --threads 8 --quality 1080p
+
+# Sync only videos modified since a specific date:
+vmb sync --dest _Downloads --since "2024-05-01"
+
+# Sync only videos modified since yesterday:
+vmb sync --dest _Downloads --since "yesterday"
+
+# See what would be downloaded without actually downloading:
+vmb sync --dest /path/to/your/backup --dry-run
+```
+*   `--dest DIR`: **Required.** Directory to store downloaded videos and the manifest.
+*   `--threads INT`: Number of parallel downloads (default: 4).
+*   `--quality QUAL`: `best`, `original`, `4k`, `2k`, `1080p`, `720p`, `540p`, `360p` (default: `best`).
+*   `--since STR`: Only consider videos modified since this date/time (formats: `YYYY-MM-DD`, `YYYY-MM-DD HH:MM:SS`, or `yesterday`).
+*   `--dry-run`: Show actions without downloading.
+
+**3. Verifying Backups**
+
+```bash
+# Check integrity of files in the backup directory against the manifest
 vmb verify --dest /path/to/your/backup
+```
+*   `--dest DIR`: **Required.** Directory containing the videos and `vmb_manifest.json`.
+*   `--fix`: (TODO) Attempt to re-download corrupted/missing files.
 
-# Key verify options:
-#   --dest DIR      [Required] Directory containing the backup and manifest.
-#   --fix           (TODO) Attempt to re-download corrupted/missing files.
+**4. Listing Videos**
 
-# 4. List Available Videos
-# Lists videos found in your Vimeo account.
+```bash
+# List videos in your Vimeo account in a table
 vmb list
 
-# Key list options:
-#   --json          Output the raw video data as JSON instead of a table.
+# List videos as raw JSON data
+vmb list --json
+```
 
-# 5. Show Backup Statistics (TODO)
+**5. Showing Statistics (TODO)**
+
+```bash
 # (Not yet implemented)
 vmb stats
 ```
 
-## Manifest File
+## Manifest File (`vmb_manifest.json`)
 
-The `vmb sync` command creates and updates a file named `vmb_manifest.json` in your backup destination directory. This file stores information about each downloaded video, including:
+The `vmb sync` command creates and updates `vmb_manifest.json` in your backup destination. This crucial file tracks:
 
-*   Filename
-*   Downloaded quality
-*   SHA-256 checksum for integrity checks
-*   Download timestamp
-*   Video metadata (name, API modified time, etc.)
+*   Which videos have been downloaded (`video_uri` as key).
+*   The local `filename` (including video ID and quality).
+*   The downloaded `quality`.
+*   The `sha256` checksum for integrity verification.
+*   Vimeo's last `api_modified_time` for the video when it was downloaded.
+*   Other metadata (`filesize`, `name`, `download_time_utc`).
 
-This file is used by `sync` to determine which videos need updating and by `verify` to check file integrity.
+It enables incremental downloads and the `vmb verify` command.
 
-## License
+## Development Setup
 
-This project is licensed under the MIT License. See the `LICENSE` file for details (if one exists - typically added when formally publishing).
+Follow the Installation steps 1-4 above to set up an editable install.
 
-## Reporting Issues
+To run linters and type checkers (as configured in `pyproject.toml`):
 
-Please report any bugs or request features using the [GitHub Issue Tracker](https://github.com/Fakirim/vimeo-backup/issues). # Updated URL
+```bash
+# Ensure virtual environment is active
+source .venv/bin/activate
+
+# Linting and formatting with Ruff
+ruff check .
+ruff format .
+
+# Type checking with MyPy
+mypy vmb/
+
+# Running tests (TODO: Add tests!)
+# pytest
+```
 
 ## Contributing
 
-Contributions are welcome! Please feel free to submit pull requests or open issues to discuss potential changes.
+Contributions are welcome! Please feel free to submit pull requests or open issues on the [GitHub Issue Tracker](https://github.com/Fakirim/vimeo-backup/issues) to discuss potential changes or report bugs.
 
-(Optional: Consider adding a `CONTRIBUTING.md` file with more detailed guidelines for code style, testing, and the pull request process.) 
+(Optional: Consider adding a `CONTRIBUTING.md` file with more detailed guidelines for code style, testing, and the pull request process.)
+
+## License
+
+This project is licensed under the MIT License. See the `LICENSE` file for details (if one exists).
