@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
 authors = [
-    { name = "Your Name", email = "you@example.com" },
+    { name = "Fakiri Mohamed", email = "fakiri.med@hotmail.com" },
 ]
 classifiers = [
     "Programming Language :: Python :: 3",
@@ -35,8 +35,8 @@ dependencies = [
 vmb = "vmb.cli:main"
 
 [project.urls]
-"Homepage" = "https://github.com/yourorg/vimeo-backup"  # Replace with actual URL
-"Bug Tracker" = "https://github.com/yourorg/vimeo-backup/issues" # Replace with actual URL
+"Homepage" = "https://github.com/Fakirim/vimeo-backup"  # Updated URL
+"Bug Tracker" = "https://github.com/Fakirim/vimeo-backup/issues" # Updated URL
 
 [tool.setuptools]
 packages = ["vmb"]

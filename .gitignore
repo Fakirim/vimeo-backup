@@ -143,4 +143,14 @@ cython_debug/
 .vscode/
 
 # IDE folders
-.idea/ 
+.idea/
+
+# --- Vimeo Backup Tool Downloads ---
+# Ignore the default download directory and its contents
+_Downloads/
+
+# Ignore temporary download files
+*._vmb_part
+
+# Ignore manifest files (if potentially outside _Downloads, though currently inside)
+# vmb_manifest.json 
