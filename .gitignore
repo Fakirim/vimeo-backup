@@ -145,6 +145,9 @@ cython_debug/
 # IDE folders
 .idea/
 
+# --- Project Documentation (Private) ---
+docs/
+
 # --- Vimeo Backup Tool Downloads ---
 # Ignore the default download directory and its contents
 _Downloads/
