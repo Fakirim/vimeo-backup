@@ -9,8 +9,6 @@
 
 A robust, cross-platform Python CLI tool designed for Vimeo Pro (and above) users to download and incrementally back up their **entire video library** to local storage. Built using the official Vimeo API to ensure compliance.
 
-See `docs/PRD.md` (private) for detailed original requirements.
-
 ## Key Features
 
 *   **Full Library Backup:** Downloads all videos accessible via your Vimeo API token.
