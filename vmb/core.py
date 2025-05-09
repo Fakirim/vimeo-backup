@@ -135,6 +135,7 @@ def prepare_download_jobs(
     skipped_exist = 0
     skipped_no_url = 0
     skipped_since = 0 # Counter for --since skips
+    skipped_file_exists = 0 # Counter for existing files skipped without manifest match
 
     # Ensure since_dt is timezone-aware (assume UTC if naive)
     aware_since_dt: Optional[datetime] = None
@@ -191,8 +192,14 @@ def prepare_download_jobs(
         reason = ""
 
         if not manifest_entry:
-            needs_download = True
-            reason = "Not found in manifest"
+            # --- Check if file exists even without manifest entry ---
+            if os.path.exists(target_path):
+                needs_download = False
+                reason = "File exists on disk, but missing from manifest (skipping download)"
+                skipped_file_exists += 1
+            else:
+                needs_download = True
+                reason = "Not found in manifest and file missing"
         else:
             manifest_filename = manifest_entry.get("filename")
             manifest_filepath = os.path.join(dest_dir, manifest_filename) if manifest_filename else None
@@ -200,6 +207,11 @@ def prepare_download_jobs(
             if not manifest_filepath or not os.path.exists(manifest_filepath):
                  needs_download = True
                  reason = f"File '{manifest_filename or 'unknown'}' missing"
+            # --- Add check if file exists even if manifest says it's missing ---
+            elif os.path.exists(target_path):
+                 needs_download = False
+                 reason = f"File exists on disk, but manifest indicated missing (skipping download)"
+                 skipped_file_exists += 1
             elif manifest_entry.get("quality") != selected_quality:
                  needs_download = True
                  reason = f"Quality changed (manifest: {manifest_entry.get('quality')}, wanted: {selected_quality})"
@@ -221,6 +233,8 @@ def prepare_download_jobs(
         console.print(f"[grey]Skipped {skipped_since} videos not modified since filter date.[/]")
     if skipped_exist > 0:
         console.print(f"[grey]Skipped {skipped_exist} videos already present and up-to-date in manifest.[/]")
+    if skipped_file_exists > 0:
+        console.print(f"[yellow]Skipped {skipped_file_exists} videos found on disk but missing/mismatched in manifest (manifest may need update via verify/sync).[/]")
     if skipped_no_url > 0:
          console.print(f"[yellow]Skipped {skipped_no_url} videos due to missing download URLs.[/]")
 

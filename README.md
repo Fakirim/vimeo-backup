@@ -1,155 +1,188 @@
-# Vimeo Library Backup Tool (`vmb`)
+# Vimeo Backup Tool
 
-<!-- Badges (update URLs when available) -->
-[![Build Status](https://img.shields.io/github/actions/workflow/status/Fakirim/vimeo-backup/ci.yml?branch=main)](https://github.com/Fakirim/vimeo-backup/actions)
-[![PyPI version](https://img.shields.io/pypi/v/vimeo-backup-tool.svg)](https://pypi.org/project/vimeo-backup-tool/)
-[![Python Version](https://img.shields.io/pypi/pyversions/vimeo-backup-tool.svg)](https://pypi.org/project/vimeo-backup-tool/)
-[![License](https://img.shields.io/github/license/Fakirim/vimeo-backup.svg)](https://github.com/Fakirim/vimeo-backup/blob/main/LICENSE)
-[![Code style: ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+[![Python: 3.8+](https://img.shields.io/badge/Python-3.8+-blue.svg)](https://www.python.org/downloads/)
 
-A robust, cross-platform Python CLI tool designed for Vimeo Pro (and above) users to download and incrementally back up their **entire video library** to local storage. Built using the official Vimeo API to ensure compliance.
+A robust command-line tool for backing up your Vimeo videos to local storage, designed for large video collections (10,000+ videos).
 
-## Key Features
+## 📋 Table of Contents
 
-*   **Full Library Backup:** Downloads all videos accessible via your Vimeo API token.
-*   **Incremental Sync:** Uses a local manifest (`vmb_manifest.json`) to track downloaded files and only downloads new or updated videos on subsequent runs.
-*   **Quality Selection:** Choose your preferred video quality (`best`, `original`, `1080p`, `720p`, etc.).
-*   **Resumable Downloads:** Automatically resumes interrupted downloads.
-*   **Integrity Verification:** Calculates SHA-256 checksums after download and provides a `verify` command to check local files against the manifest.
-*   **Concurrent Downloads:** Utilizes multiple threads (`--threads`) for faster downloading.
-*   **Secure Token Storage:** Stores your Vimeo Personal Access Token (PAT) securely in the OS keyring.
-*   **Cross-Platform:** Designed to work on macOS, Linux, and Windows.
+- [Features](#features)
+- [Installation](#installation)
+- [Authentication](#authentication)
+- [Usage](#usage)
+  - [Basic Sync](#basic-sync)
+  - [Advanced Options](#advanced-options)
+  - [Verification](#verification)
+  - [Manifest Repair](#manifest-repair)
+  - [Resume Downloads](#resume-downloads)
+  - [Build Database](#build-database)
+- [Upgrading from JSON to SQLite](#upgrading-from-json-to-sqlite)
+- [Troubleshooting](#troubleshooting)
+- [Development](#development)
+- [License](#license)
 
-## Installation
+## ✨ Features
 
-Requires **Python >= 3.11**.
+- **Robust SQLite Database Backend**: Efficiently manages large video collections (17,000+ videos) with better performance and reliability than JSON
+- **Automatic Manifest Repair**: Can scan and detect existing videos not in the manifest
+- **Auto-Resume Downloads**: Automatically resumes interrupted downloads
+- **Verify Integrity**: Validates downloaded videos against checksums
+- **Concurrent Downloads**: Speeds up backup process with multi-threading
+- **Quality Selection**: Choose your preferred video quality
+- **Date Filtering**: Only download videos updated since a specific date
+- **Incremental Backup**: Skip videos that already exist locally
+- **Database Builder**: Build a database from existing downloaded videos without creating JSON files
+- **Graceful Cancellation**: Safely interrupt downloads with Ctrl+C while preserving progress
+
+## 🚀 Installation
 
 ```bash
-# 1. Clone the repository
-git clone https://github.com/Fakirim/vimeo-backup.git
-cd vimeo-backup
+# Create and activate a virtual environment
+python -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 
-# 2. Create and activate a virtual environment
-#    (Use the command for your Python 3.11+ interpreter)
-python3.11 -m venv .venv 
-source .venv/bin/activate  # On Windows use: .venv\Scripts\activate
-
-# 3. Install dependencies
-pip install -U pip
-pip install -r requirements.txt
-
-# 4. Install the tool in editable mode (recommended for development)
-#    This makes the `vmb` command available in your activated environment.
+# Install the package in development mode
 pip install -e .
 
-# OR: Install for general use (if published to PyPI later)
-# pip install vimeo-backup-tool
+# Ensure you have the correct version of rich
+pip install rich==13.7.0
 ```
 
-## Usage
+## 🔑 Authentication
 
-First, ensure your virtual environment is activated (`source .venv/bin/activate`).
-
-**1. Authentication (Run Once)**
+Before using the tool, you need to authenticate with Vimeo:
 
 ```bash
-# Prompts for your Vimeo Personal Access Token (PAT).
-# Requires 'public', 'private', and 'video_files' scopes.
-# Get a token: https://developer.vimeo.com/apps
 vmb auth
 ```
-The token is stored securely in your OS keyring.
 
-**2. Syncing Videos**
+This will prompt you to enter your Vimeo Personal Access Token (PAT).
 
-```bash
-# Basic sync: Downloads new/updated videos to the specified directory
-vmb sync --dest /path/to/your/backup
+**Important**: Your token needs the following scopes:
+- `public`
+- `private`
+- `video_files`
 
-# Sync with options:
-vmb sync --dest ~/Videos/VimeoBackup --threads 8 --quality 1080p
+Generate your token at [https://developer.vimeo.com/apps](https://developer.vimeo.com/apps).
 
-# Sync only videos modified since a specific date:
-vmb sync --dest _Downloads --since "2024-05-01"
+## 📥 Usage
 
-# Sync only videos modified since yesterday:
-vmb sync --dest _Downloads --since "yesterday"
+### Basic Sync
 
-# See what would be downloaded without actually downloading:
-vmb sync --dest /path/to/your/backup --dry-run
-```
-*   `--dest DIR`: **Required.** Directory to store downloaded videos and the manifest.
-*   `--threads INT`: Number of parallel downloads (default: 4).
-*   `--quality QUAL`: `best`, `original`, `4k`, `2k`, `1080p`, `720p`, `540p`, `360p` (default: `best`).
-*   `--since STR`: Only consider videos modified since this date/time (formats: `YYYY-MM-DD`, `YYYY-MM-DD HH:MM:SS`, or `yesterday`).
-*   `--dry-run`: Show actions without downloading.
-
-**3. Verifying Backups**
+To download all your Vimeo videos to a local directory:
 
 ```bash
-# Check integrity of files in the backup directory against the manifest
-vmb verify --dest /path/to/your/backup
+vmb sync --dest /path/to/download/directory
 ```
-*   `--dest DIR`: **Required.** Directory containing the videos and `vmb_manifest.json`.
-*   `--fix`: (TODO) Attempt to re-download corrupted/missing files.
 
-**4. Listing Videos**
+### Advanced Options
+
+| Option | Description | Example |
+|--------|-------------|---------|
+| `--threads` | Set number of concurrent downloads | `--threads 5` |
+| `--since` | Only download videos modified after date | `--since 2023-01-01` |
+| `--quality` | Specify video quality to download | `--quality 1080p` |
+| `--use-json` | Use JSON storage instead of SQLite | `--use-json` |
+| `--dry-run` | Preview downloads without downloading | `--dry-run` |
+
+Example with multiple options:
 
 ```bash
-# List videos in your Vimeo account in a table
-vmb list
-
-# List videos as raw JSON data
-vmb list --json
+vmb sync --dest /path/to/videos --threads 5 --since 2023-01-01 --quality 1080p
 ```
 
-**5. Showing Statistics (TODO)**
+### Verification
+
+Verify the integrity of your downloaded videos:
 
 ```bash
-# (Not yet implemented)
-vmb stats
+vmb verify --dest /path/to/download/directory
 ```
 
-## Manifest File (`vmb_manifest.json`)
+### Manifest Repair
 
-The `vmb sync` command creates and updates `vmb_manifest.json` in your backup destination. This crucial file tracks:
-
-*   Which videos have been downloaded (`video_uri` as key).
-*   The local `filename` (including video ID and quality).
-*   The downloaded `quality`.
-*   The `sha256` checksum for integrity verification.
-*   Vimeo's last `api_modified_time` for the video when it was downloaded.
-*   Other metadata (`filesize`, `name`, `download_time_utc`).
-
-It enables incremental downloads and the `vmb verify` command.
-
-## Development Setup
-
-Follow the Installation steps 1-4 above to set up an editable install.
-
-To run linters and type checkers (as configured in `pyproject.toml`):
+Detect videos in your destination directory that aren't tracked in the manifest:
 
 ```bash
-# Ensure virtual environment is active
-source .venv/bin/activate
-
-# Linting and formatting with Ruff
-ruff check .
-ruff format .
-
-# Type checking with MyPy
-mypy vmb/
-
-# Running tests (TODO: Add tests!)
-# pytest
+vmb verify --dest /path/to/download/directory --repair-manifest
 ```
 
-## Contributing
+### Resume Downloads
 
-Contributions are welcome! Please feel free to submit pull requests or open issues on the [GitHub Issue Tracker](https://github.com/Fakirim/vimeo-backup/issues) to discuss potential changes or report bugs.
+Find and resume any interrupted downloads:
 
-(Optional: Consider adding a `CONTRIBUTING.md` file with more detailed guidelines for code style, testing, and the pull request process.)
+```bash
+vmb verify --dest /path/to/download/directory --resume-incomplete
+```
 
-## License
+### Build Database
 
-This project is licensed under the MIT License. See the `LICENSE` file for details (if one exists).
+Create a database from existing downloaded videos without generating JSON files:
+
+```bash
+vmb build-db --dest /path/to/download/directory
+```
+
+## 🔄 Upgrading from JSON to SQLite
+
+If you've been using an older version with JSON storage:
+
+1. The tool will automatically detect your JSON manifest
+2. It will convert it to SQLite the first time you run with the `--use-db` flag (which is now the default)
+3. Your original JSON files will be preserved
+
+## ❓ Troubleshooting
+
+### Network Issues
+
+If you encounter `Network is unreachable` errors:
+
+1. Check your internet connection
+2. Verify you can reach Vimeo's API: `ping api.vimeo.com`
+3. Configure proxy settings if behind a proxy
+
+### API Errors
+
+If you encounter API errors:
+
+1. Verify your token is valid: Run `vmb auth` to set a new token
+2. Check for rate limiting (the tool automatically retries with backoff)
+3. Check [Vimeo Developer Status](https://developer.vimeo.com/api/status) for service issues
+
+### Keyring Issues
+
+If you see `No recommended backend was available` during authentication:
+
+1. Install a supported keyring backend: `pip install keyrings.alt`
+2. For headless environments, use the file-based backend
+
+### Rich Library Issues
+
+If you see `ImportError: cannot import name 'FileTransferSpeedColumn' from 'rich.progress'`:
+
+1. Update your rich library: `pip install rich==13.7.0`
+2. This specific version includes the components needed for progress display
+
+## 🛠️ Development
+
+### Project Structure
+
+```
+vmb/
+├── api.py      # Vimeo API interaction
+├── cli.py      # Command-line interface
+├── config.py   # Configuration and token management
+├── core.py     # Core functionality and types
+├── db.py       # SQLite database backend
+├── io.py       # File I/O and download logic
+└── verify.py   # Verification and manifest management
+```
+
+### Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+## 📄 License
+
+This project is licensed under the MIT License - see the LICENSE file for details.

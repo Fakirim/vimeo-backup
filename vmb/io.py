@@ -1,37 +1,36 @@
 import os
 import requests
 import time
+import threading
 from typing import Optional, Dict, Any
 from rich.progress import (
     Progress,
     BarColumn,
-    DownloadColumn,
     TextColumn,
     TimeRemainingColumn,
     TransferSpeedColumn,
+    DownloadColumn,
 )
 from rich.console import Console
 
-from .core import DownloadJob # Assuming DownloadJob is defined in core
-from .verify import calculate_sha256, update_manifest_entry, ManifestData
+from .core import DownloadJob
+from .verify import calculate_sha256, update_manifest_entry
+from .db import ManifestDB, update_manifest_entry_db
 
 console = Console()
 
-# --- Constants ---
-CHUNK_SIZE = 1024 * 1024  # 1MB chunks
-CONNECT_TIMEOUT = 15  # seconds
-READ_TIMEOUT = 60  # seconds
-TEMP_SUFFIX = "._vmb_part"
-MAX_RETRIES = 3 # Retries specifically for download chunk errors
-RETRY_DELAY = 5 # Seconds
+# Number of retries for network errors
+MAX_RETRIES = 3
 
+# Constants for download chunks
+CHUNK_SIZE = 1024 * 1024  # 1MB chunks for downloads
 
 def get_rich_progress() -> Progress:
-    """Returns a pre-configured Rich Progress instance for downloads."""
+    """Create and return a configured Progress instance for file downloads."""
     return Progress(
-        TextColumn("[bold blue]{task.fields[filename]}", justify="right"),
-        BarColumn(bar_width=None),
-        "[progress.percentage]{task.percentage:>3.1f}%",
+        TextColumn("[bold blue]{task.description}"),
+        BarColumn(),
+        "[progress.percentage]{task.percentage:>3.0f}%",
         "•",
         DownloadColumn(),
         "•",
@@ -41,164 +40,173 @@ def get_rich_progress() -> Progress:
     )
 
 def download_video(
-    job: DownloadJob, 
-    progress: Progress, 
+    job: DownloadJob,
+    progress: Progress,
     task_id,
-    manifest_data: ManifestData
+    manifest_data: Dict[str, Dict[str, Any]],
+    manifest_path: str,
+    manifest_lock: threading.Lock,
+    db: Optional[ManifestDB] = None,
+    _retry_count: int = 0  # Add retry counter parameter with default 0
 ) -> bool:
     """Downloads a single video file specified by the DownloadJob.
 
-    Handles streaming, progress reporting, temporary files, basic resume,
-    hash calculation, and manifest update.
-
     Args:
-        job: The DownloadJob containing download details.
-        progress: The rich Progress instance to report to.
-        task_id: The Task ID created within the Progress instance for this download.
+        job: The download job containing URL and target path.
+        progress: Progress instance for updating the UI.
+        task_id: The ID of the task in the progress display.
         manifest_data: The dictionary representing the manifest (will be modified).
+        manifest_path: Path to the manifest file.
+        manifest_lock: Lock for thread-safe manifest updates.
+        db: Optional ManifestDB instance for database storage.
 
     Returns:
-        True if download completed successfully, False otherwise.
+        True if download was successful, False otherwise.
     """
-    target_path = job.target_path
-    temp_path = target_path + TEMP_SUFFIX
-    download_url = job.download_url
-    retries = 0
-
-    while retries < MAX_RETRIES:
-        try:
-            headers = {}
-            current_size = 0
-            mode = "wb" # Write binary mode
-
-            # --- Resume Logic --- 
-            if os.path.exists(temp_path):
-                current_size = os.path.getsize(temp_path)
-                console.print(f"Resuming download for '{job.video_name}' from byte {current_size}")
-                headers["Range"] = f"bytes={current_size}-"
-                mode = "ab" # Append binary mode
-            else:
-                current_size = 0
-                mode = "wb"
-
-            # --- Make Request --- 
-            response = requests.get(
-                download_url,
-                stream=True,
-                headers=headers,
-                timeout=(CONNECT_TIMEOUT, READ_TIMEOUT),
-                allow_redirects=True # Follow redirects which Vimeo might use
-            )
-
-            # Handle range requests - 206 Partial Content is expected when resuming
-            if response.status_code == 206: # Partial Content
-                pass # Expected when resuming
-            elif response.status_code == 416: # Range Not Satisfiable
-                # This means the file is likely already complete
-                console.print(f"[yellow]Warning:[/yellow] Received 416 Range Not Satisfiable for '{job.video_name}'. File might be complete.")
-                # Check if the temp file size matches Content-Range total size if available? Or just assume complete.
-                if os.path.exists(temp_path):
-                    os.rename(temp_path, target_path)
-                    progress.update(task_id, completed=True, visible=False)
-                    console.print(f"[green]Completed:[/green] '{job.video_name}' (assumed complete based on 416).",) 
-                    return True
-                else: # Should not happen, but handle defensively
-                     console.print(f"[red]Error:[/red] Received 416 but no temp file found for '{job.video_name}'. Skipping.",) 
-                     progress.update(task_id, visible=False) # Hide progress
-                     return False
-            elif response.ok:
-                 # If we didn't request a range, or server ignored it, reset current_size
-                 if "Range" not in headers:
-                      current_size = 0
-                      mode = "wb"
-            else:
-                # Handle other errors (4xx, 5xx)
-                console.print(f"[red]Error:[/red] Failed to start download for '{job.video_name}'. Status: {response.status_code} {response.reason}")
-                progress.update(task_id, visible=False)
-                return False
-
-            # --- Get Total Size --- 
-            total_size_str = response.headers.get("content-length")
-            total_size = None
-            if total_size_str:
-                 total_size = int(total_size_str) + current_size # Add already downloaded size for total
-                 progress.update(task_id, total=total_size, completed=current_size)
-            else:
-                 # If no content-length, we can't show progress accurately
-                 progress.update(task_id, total=None) # Indeterminate progress
-                 console.print(f"[yellow]Warning:[/yellow] No content-length for '{job.video_name}'. Progress bar may be inaccurate.")
-
-            # --- Download Loop --- 
-            download_successful = False
+    # Prepare temporary file path
+    temp_path = f"{job.target_path}._vmb_part"
+    
+    # Create directory if it doesn't exist
+    os.makedirs(os.path.dirname(temp_path), exist_ok=True)
+    
+    # Check retry limit to prevent infinite loops
+    MAX_RETRIES = 3  # Maximum number of retry attempts
+    if _retry_count >= MAX_RETRIES:
+        console.print(f"[bold red]Error:[/bold red] Maximum retry attempts ({MAX_RETRIES}) reached for {job.video_name}. Giving up.")
+        return False
+        
+    # Start the download
+    try:
+        # Update task description to show it's now downloading
+        progress.update(task_id, description=f"⬇️ DOWNLOADING: {job.video_name}")
+        # Start progress tracking
+        progress.start_task(task_id)
+        
+        # Track how much we've downloaded (used for resuming)
+        downloaded_bytes = 0
+        headers = {}
+        
+        # Check if we have a partial download already
+        if os.path.exists(temp_path):
+            # Get size of existing file
+            downloaded_bytes = os.path.getsize(temp_path)
+            # Only add Range header if we have actually downloaded something
+            if downloaded_bytes > 0:
+                headers["Range"] = f"bytes={downloaded_bytes}-"
+                console.print(f"Resuming download from {downloaded_bytes} bytes")
+        
+        # Make the request
+        with requests.get(job.download_url, headers=headers, stream=True, timeout=30) as response:
+            # Check if the response is valid
+            response.raise_for_status()
+            
+            # Get total size (handle range requests)
+            total_size = int(response.headers.get("content-length", 0))
+            if downloaded_bytes > 0 and response.status_code == 206:  # Partial content
+                # Add the already downloaded bytes to the total
+                total_size += downloaded_bytes
+            elif downloaded_bytes > 0 and response.status_code == 200:  # Server doesn't support range
+                # We need to start over
+                downloaded_bytes = 0
+                # Truncate the file
+                open(temp_path, "wb").close()
+            
+            # Update progress display with the total size
+            progress.update(task_id, total=total_size, completed=downloaded_bytes)
+            
+            # Open the file in append mode if resuming, otherwise write mode
+            mode = "ab" if downloaded_bytes > 0 else "wb"
             with open(temp_path, mode) as f:
+                # Download in chunks
                 for chunk in response.iter_content(chunk_size=CHUNK_SIZE):
-                    if chunk: # filter out keep-alive new chunks
+                    if chunk:
                         f.write(chunk)
-                        progress.update(task_id, advance=len(chunk))
-                download_successful = True # Mark as successful only if loop completes
-
-            # --- Finalization --- 
-            # Verify final size if total_size was known and download loop finished
-            if download_successful:
-                final_size = os.path.getsize(temp_path)
-                if total_size is not None and final_size < total_size:
-                    # Don't retry here, let the outer loop handle it
-                    raise requests.exceptions.RequestException(f"Download incomplete: Expected {total_size} bytes, got {final_size}")
-
-                # --- Hash Calculation & Manifest Update --- 
-                progress.update(task_id, description=f"Hashing {job.video_name}...")
-                sha256_hash = calculate_sha256(temp_path)
-                if sha256_hash:
-                    # Move temp file to final path *after* hashing
-                    os.rename(temp_path, target_path)
-                    progress.update(task_id, visible=False) # Hide completed task
-                    console.print(f"[green]Completed:[/green] '{job.video_name}' -> '{target_path}'")
-                    
-                    # Update the manifest data dictionary (in memory)
-                    update_manifest_entry(
-                        manifest_data,
-                        job.video_data, # Get original video data from job
-                        target_path,
-                        job.selected_quality,
-                        sha256_hash
-                    )
-                    return True # Success
-                else:
-                    # Hash calculation failed
-                    console.print(f"[red]Error:[/red] Failed to calculate hash for downloaded file '{temp_path}'. Skipping manifest update and deleting temp file.")
-                    progress.update(task_id, visible=False)
-                    try: os.remove(temp_path) 
-                    except OSError: pass
-                    return False # Treat as failure
+                        # Update progress
+                        downloaded_bytes += len(chunk)
+                        progress.update(task_id, completed=downloaded_bytes)
+        
+        # Calculate SHA-256 hash for verification
+        progress.update(task_id, description=f"🔍 VERIFYING: {job.video_name}")
+        sha256_hash = calculate_sha256(temp_path)
+        
+        if not sha256_hash:
+            console.print(f"[red]Error:[/red] Could not verify download hash for {job.video_name}")
+            return False
+        
+        # Rename temporary file to final file
+        os.replace(temp_path, job.target_path)
+        
+        # Debug output is now conditional based on environment variable
+        # Set VMB_DEBUG=1 to enable these debug messages
+        if os.environ.get('VMB_DEBUG') == '1':
+            console.print(f"[grey][DEBUG IO] Download completed for {job.video_name}[/grey]")
+            # Detailed debug info only shown when explicitly requested
+            if os.environ.get('VMB_DEBUG_VERBOSE') == '1':
+                console.print(f"[grey][DEBUG IO] Job object type: {type(job)}[/grey]")
+                console.print(f"[grey][DEBUG IO] Job attributes: {dir(job)}[/grey]")
+                if hasattr(job, 'video_data'):
+                    console.print(f"[grey][DEBUG IO] Video URI: {job.video_data.get('uri')}[/grey]")
+                    # Don't print the full video_data as it's too verbose
+                if hasattr(job, 'selected_quality'):
+                    console.print(f"[grey][DEBUG IO] Selected quality: {job.selected_quality}[/grey]")
+        
+        # Update the manifest
+        with manifest_lock:
+            if db:
+                # Update both manifest_data and database at once
+                updated = update_manifest_entry_db(
+                    db=db,
+                    manifest_data=manifest_data,
+                    video_data=job.video_data,
+                    filepath=job.target_path,
+                    quality=job.selected_quality,
+                    sha256_hash=sha256_hash
+                )
+                
+                # Don't save the JSON manifest if we're using the database
+                # This avoids creating unnecessary vmb_manifest.json files
             else:
-                 # Download loop didn't complete (likely connection error before loop)
-                 # Error should have been raised or handled already, just ensure we return False
-                 return False
-
-        except requests.exceptions.Timeout as e:
-            console.print(f"[yellow]Timeout occurred for '{job.video_name}': {e}. Retrying ({retries+1}/{MAX_RETRIES})...[/]")
-        except requests.exceptions.RequestException as e:
-            console.print(f"[yellow]Download error for '{job.video_name}': {e}. Retrying ({retries+1}/{MAX_RETRIES})...[/]")
-        except Exception as e:
-            console.print(f"[red]Unexpected error during download of '{job.video_name}': {e}. Stopping retries for this file.[/]")
-            # Log full traceback here potentially
-            progress.update(task_id, visible=False)
-            # Clean up temp file on unexpected error?
-            if os.path.exists(temp_path):
-                 try: os.remove(temp_path) 
-                 except OSError: pass
-            return False # Abort for this file
-
-        # If we reached here, an error occurred, wait before retrying
-        retries += 1
-        if retries < MAX_RETRIES:
-            time.sleep(RETRY_DELAY)
-
-    # If loop finishes, all retries failed
-    console.print(f"[red]Error:[/red] Failed to download '{job.video_name}' after {MAX_RETRIES} retries.")
-    progress.update(task_id, visible=False)
-    # Optionally remove the potentially corrupted temp file
-    # if os.path.exists(temp_path):
-    #    try: os.remove(temp_path)
-    #    except OSError: pass
-    return False 
+                # Just update the in-memory manifest_data
+                updated = update_manifest_entry(
+                    manifest_data=manifest_data,
+                    video_data=job.video_data,
+                    filepath=job.target_path,
+                    quality=job.selected_quality,
+                    sha256_hash=sha256_hash
+                )
+                
+                # Save the in-memory manifest to the JSON file only when not using database
+                from .verify import save_manifest
+                save_manifest(manifest_path, manifest_data)
+        
+        # Update progress description
+        filesize_mb = round(downloaded_bytes / (1024 * 1024), 2)
+        progress.update(task_id, description=f"✅ COMPLETED: {job.video_name} ({filesize_mb} MB)")
+        # Hide completed tasks after a short delay to keep focus on active downloads
+        progress.update(task_id, visible=True)
+        
+        return True
+    
+    except requests.RequestException as e:
+        console.print(f"[red]Download Error:[/red] Failed to download {job.video_name}: {e}")
+        # Recursively retry with incremented counter
+        if _retry_count < MAX_RETRIES:
+            console.print(f"Retrying download for {job.video_name} (attempt {_retry_count + 1} of {MAX_RETRIES})...")
+            return download_video(job, progress, task_id, manifest_data, manifest_path, manifest_lock, db, _retry_count + 1)
+        return False
+    
+    except (IOError, OSError) as e:
+        console.print(f"[red]File Error:[/red] Failed to write {job.video_name}: {e}")
+        # Recursively retry with incremented counter
+        if _retry_count < MAX_RETRIES:
+            console.print(f"Retrying download for {job.video_name} (attempt {_retry_count + 1} of {MAX_RETRIES})...")
+            return download_video(job, progress, task_id, manifest_data, manifest_path, manifest_lock, db, _retry_count + 1)
+        return False
+    
+    except Exception as e:
+        console.print(f"[red]Unexpected Error:[/red] Failed to download {job.video_name}: {e}")
+        # Recursively retry with incremented counter
+        if _retry_count < MAX_RETRIES:
+            console.print(f"Retrying download for {job.video_name} (attempt {_retry_count + 1} of {MAX_RETRIES})...")
+            return download_video(job, progress, task_id, manifest_data, manifest_path, manifest_lock, db, _retry_count + 1)
+        return False 

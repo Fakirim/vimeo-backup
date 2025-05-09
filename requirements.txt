@@ -3,7 +3,7 @@ click
 keyring
 pyvimeo
 requests
-rich
+rich==13.7.0
 tqdm
 
 # Development & Testing Dependencies
